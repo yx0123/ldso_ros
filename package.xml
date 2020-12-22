@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>dso_ros</name>
+  <name>ldso_ros</name>
   <version>1.0.0</version>
   <description>
 
-    ROS Wrapper DSO.
+    ROS Wrapper LDSO.
 
   </description>
 
@@ -18,7 +18,7 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
-  <depend>dso</depend>
+  <depend>ldso</depend>
   <depend>geometry_msgs</depend>
   <depend>roscpp</depend>
   <depend>sensor_msgs</depend>

@@ -1,5 +1,25 @@
-cmake_minimum_required(VERSION 2.4.6)
-project(dso_ros)
+cmake_minimum_required(VERSION 2.8)
+project(ldso_ros)
+
+
+# Set default build type if not specified otherwise.
+# See https://cmake.org/pipermail/cmake/2012-May/050243.html
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+  message(STATUS "Setting build type to '${CMAKE_BUILD_TYPE}' as none was specified.")
+  # Set the possible values of build type for cmake-gui
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
+    "MinSizeRel" "RelWithDebInfo")
+endif()
+
+# C++ standard
+if(${CMAKE_VERSION} VERSION_LESS "3.2.0")
+  set( CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}" )
+else()
+  set(CMAKE_CXX_STANDARD 11)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
 
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
@@ -7,8 +27,6 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   cv_bridge
 )
-
-# TODO: add cmake config files to dso such that it is picked up automatically, like pangolin!
 
 ##########################################################################
 # You can set DSO_PATH to your source folder by passing
@@ -19,47 +37,49 @@ find_package(catkin REQUIRED COMPONENTS
 # (which also works in works with DSO installed in the devel folder).
 ##########################################################################
 
-#set(DSO_PATH         /home/user/dso)
-#set(DSO_LIBRARY_PATH /home/user/build-dso)
+
+set(LDSO_PATH         /home/dh/workspaces/ldso_ws/src/LDSO)
+set(LDSO_LIBRARY_PATH /home/dh/workspaces/ldso_ws/src/LDSO/lib)
+LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 # set values from environment variables
-if (NOT DSO_PATH)
-    set(DSO_PATH $ENV{DSO_PATH})
+if (NOT LDSO_PATH)
+    set(LDSO_PATH $ENV{LDSO_PATH})
 endif()
-if (NOT DSO_LIBRARY_PATH)
-    set(DSO_LIBRARY_PATH $ENV{DSO_LIBRARY_PATH})
-    if (NOT DSO_LIBRARY_PATH AND DSO_PATH)
-        set(DSO_LIBRARY_PATH "${DSO_PATH}/build/lib")
+if (NOT LDSO_LIBRARY_PATH)
+    set(LDSO_LIBRARY_PATH $ENV{LDSO_LIBRARY_PATH})
+    if (NOT LDSO_LIBRARY_PATH AND LDSO_PATH)
+        set(LDSO_LIBRARY_PATH "${LDSO_PATH}/build/lib")
     endif()
 endif()
 
-if (DSO_PATH)
-    # Manually set path to DSO source folder
-    message("DSO_PATH set, trying to find library.")
-    message("---- EXPECTING DSO sources at\n\"${DSO_PATH}\"")
-    set(DSO_INCLUDE_DIRS "${DSO_PATH}/src" "${DSO_PATH}/thirdparty/Sophus")
-    message("---- LOOKING FOR DSO library at\n\"${DSO_LIBRARY_PATH}\"")
-    find_library(DSO_LIBRARY dso ${DSO_LIBRARY_PATH})
+if (LDSO_PATH)
+    # Manually set path to LDSO source folder
+    message("LDSO_PATH set, trying to find library.")
+    message("---- EXPECTING LDSO sources at\n\"${LDSO_PATH}\"")
+    set(LDSO_INCLUDE_DIRS "${LDSO_PATH}/include" "${LDSO_PATH}/thirdparty")
+    message("---- LOOKING FOR LDSO library at\n\"${LDSO_LIBRARY_PATH}\"")
+    find_library(LDSO_LIBRARY ldso ${LDSO_LIBRARY_PATH})
 else()
-    # Detect DSO install (also catkin devel folder)
-    message("DSO_PATH not set yet, trying to find installed dso headers and library.")
-    find_path(DSO_INCLUDE_DIRS dso)
-    if (DSO_INCLUDE_DIRS)
-        set(DSO_INCLUDE_DIRS "${DSO_INCLUDE_DIRS}/dso")
-        message("---- FOUND DSO headers at \"${DSO_INCLUDE_DIRS}\"")
+    # Detect LDSO install (also catkin devel folder)
+    message("LDSO_PATH not set yet, trying to find installed dso headers and library.")
+    find_path(LDSO_INCLUDE_DIRS ldso)
+    if (LDSO_INCLUDE_DIRS)
+        set(LDSO_INCLUDE_DIRS "${LDSO_INCLUDE_DIRS}")
+        message("---- FOUND LDSO headers at \"${LDSO_INCLUDE_DIRS}\"")
     endif()
-    find_library(DSO_LIBRARY dso)
+    find_library(LDSO_LIBRARY ldso)
+endif()
+message("---- Found LDSO include at \"${LDSO_INCLUDE_DIRS}\"")
+
+if (NOT LDSO_INCLUDE_DIRS)
+    message(FATAL_ERROR "LDSO headers not found and/or LDSO_PATH not set.")
+endif()
+if (NOT LDSO_LIBRARY)
+    message(FATAL_ERROR "LDSO library not found and/or LDSO_LIBRARY_PATH not set.")
 endif()
 
-
-if (NOT DSO_INCLUDE_DIRS)
-    message(FATAL_ERROR "DSO headers not found and/or DSO_PATH not set.")
-endif()
-if (NOT DSO_LIBRARY)
-    message(FATAL_ERROR "DSO library not found and/or DSO_LIBRARY_PATH not set.")
-endif()
-
-message("---- Found DSO library at \"${DSO_LIBRARY}\"")
+message("---- Found LDSO library at \"${LDSO_LIBRARY}\"")
 
 
 
@@ -73,6 +93,8 @@ message("---- FOUND OpenCV Libs at\n\"${OpenCV_LIBS}\"")
 
 find_package(Eigen3 REQUIRED)
 find_package(Boost COMPONENTS system thread)
+find_package(Glog REQUIRED)
+message("\n\n---- FOUND Glog Headers at\n\"${GLOG_INCLUDE_DIRS}\"")
 
 catkin_package(
   CATKIN_DEPENDS
@@ -82,27 +104,44 @@ catkin_package(
     cv_bridge
 )
 
+set(CMAKE_CXX_FLAGS "-Wall -Wno-deprecated -march=native -Wno-duplicate-decl-specifier -Wno-ignored-qualifiers -Wno-reorder -Wno-missing-braces")
+if(NOT APPLE)
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+endif()
 ###########
 ## Build ##
 ###########
 
-set(CMAKE_CXX_FLAGS "-std=c++14 -march=native"
-#   "${SSE_FLAGS} -O2 -g -std=c++0x -march=native -fno-omit-frame-pointer"
-)
 
 include_directories(
   ${PROJECT_SOURCE_DIR}/src
-  ${DSO_INCLUDE_DIRS}
+  ${LDSO_INCLUDE_DIRS}
   ${Pangolin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${catkin_INCLUDE_DIRS}
+  ${GLOG_INCLUDE_DIRS}
+  ${LDSO_PATH}/thirdparty/g2o/
+  ${LDSO_PATH}/thirdparty/DBoW3/
+
+)
+
+set( THIRD_PARTY_LIBS
+        ${OpenCV_LIBS}
+        ${GLOG_LIBRARY}
+        ${Pangolin_LIBRARIES}
+        ${LDSO_PATH}/thirdparty/g2o/lib/libg2o${CMAKE_SHARED_LIBRARY_SUFFIX}
+        ${LDSO_PATH}/thirdparty/DBoW3/build/src/libDBoW3${CMAKE_SHARED_LIBRARY_SUFFIX}
 )
 
 ## Declare a C++ executable
-add_executable(dso_live src/main.cpp)
+add_executable(ldso_live src/main.cpp)
 
-target_link_libraries(dso_live
-    ${DSO_LIBRARY}
-    ${Pangolin_LIBRARIES}
-    ${OpenCV_LIBS}
-    ${catkin_LIBRARIES})
+#add_subdirectory(src)
+
+
+target_link_libraries(ldso_live
+    ${LDSO_LIBRARY}
+    ${catkin_LIBRARIES}
+    ${GLOG_LIBRARY}
+    ${THIRD_PARTY_LIBS}
+)

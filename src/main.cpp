@@ -1,4 +1,6 @@
 /**
+* Modified version of original DSO ROS wrapper to make it work for LDSO
+* 
 * This file is part of DSO.
 * 
 * Copyright 2016 Technical University of Munich and Intel.
@@ -31,82 +33,38 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include "util/settings.h"
-#include "FullSystem/FullSystem.h"
-#include "util/Undistort.h"
-#include "IOWrapper/Pangolin/PangolinDSOViewer.h"
-#include "IOWrapper/OutputWrapper/SampleOutputWrapper.h"
+//#include "util/settings.h"
+#include "frontend/FullSystem.h"
+#include "frontend/Undistort.h"
+#include "frontend/DSOViewer.h"
+//#include "IOWrapper/OutputWrapper/SampleOutputWrapper.h"
 
 
 #include <ros/ros.h>
 #include <sensor_msgs/image_encodings.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
-#include <geometry_msgs/PoseStamped.h>
+#include <nav_msgs/Odometry.h>
 #include "cv_bridge/cv_bridge.h"
+#include <glog/logging.h>
+#include "IOWrapper/Pangolin/PangolinDSOViewer.h"
+//#include "IOWrapper/OutputWrapper/SampleOutputWrapper.h"
+
 
 
 std::string calib = "";
 std::string vignetteFile = "";
 std::string gammaFile = "";
+std::string vocPath = "../../LDSO/vocab/orbvoc.dbow3";
+
 bool useSampleOutput=false;
 
-using namespace dso;
+using namespace ldso;
 
 void parseArgument(char* arg)
 {
-	int option;
+	
 	char buf[1000];
-
-	if(1==sscanf(arg,"sampleoutput=%d",&option))
-	{
-		if(option==1)
-		{
-			useSampleOutput = true;
-			printf("USING SAMPLE OUTPUT WRAPPER!\n");
-		}
-		return;
-	}
-
-	if(1==sscanf(arg,"quiet=%d",&option))
-	{
-		if(option==1)
-		{
-			setting_debugout_runquiet = true;
-			printf("QUIET MODE, I'll shut up!\n");
-		}
-		return;
-	}
-
-
-	if(1==sscanf(arg,"nolog=%d",&option))
-	{
-		if(option==1)
-		{
-			setting_logStuff = false;
-			printf("DISABLE LOGGING!\n");
-		}
-		return;
-	}
-
-	if(1==sscanf(arg,"nogui=%d",&option))
-	{
-		if(option==1)
-		{
-			disableAllDisplay = true;
-			printf("NO GUI!\n");
-		}
-		return;
-	}
-	if(1==sscanf(arg,"nomt=%d",&option))
-	{
-		if(option==1)
-		{
-			multiThreading = false;
-			printf("NO MultiThreading!\n");
-		}
-		return;
-	}
 	if(1==sscanf(arg,"calib=%s",buf))
 	{
 		calib = buf;
@@ -120,6 +78,12 @@ void parseArgument(char* arg)
 		return;
 	}
 
+	  if (1 == sscanf(arg, "vocab=%s", buf)) {
+        vocPath = buf;
+        printf("loading vocabulary from %s!\n", vocPath.c_str());
+        return;
+    }
+
 	if(1==sscanf(arg,"gamma=%s",buf))
 	{
 		gammaFile = buf;
@@ -130,9 +94,7 @@ void parseArgument(char* arg)
 	printf("could not parse argument \"%s\"!!\n", arg);
 }
 
-
-
-
+ros::Publisher posePub;
 FullSystem* fullSystem = 0;
 Undistort* undistorter = 0;
 int frameID = 0;
@@ -142,38 +104,36 @@ void vidCb(const sensor_msgs::ImageConstPtr img)
 	cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);
 	assert(cv_ptr->image.type() == CV_8U);
 	assert(cv_ptr->image.channels() == 1);
-
-
-	if(setting_fullResetRequested)
-	{
-		std::vector<IOWrap::Output3DWrapper*> wraps = fullSystem->outputWrapper;
-		delete fullSystem;
-		for(IOWrap::Output3DWrapper* ow : wraps) ow->reset();
-		fullSystem = new FullSystem();
-		fullSystem->linearizeOperation=false;
-		fullSystem->outputWrapper = wraps;
-	    if(undistorter->photometricUndist != 0)
-	    	fullSystem->setGammaFunction(undistorter->photometricUndist->getG());
-		setting_fullResetRequested=false;
-	}
-
+	
 	MinimalImageB minImg((int)cv_ptr->image.cols, (int)cv_ptr->image.rows,(unsigned char*)cv_ptr->image.data);
 	ImageAndExposure* undistImg = undistorter->undistort<unsigned char>(&minImg, 1,0, 1.0f);
+	undistImg->timestamp = cv_ptr->header.stamp.toSec();
 	fullSystem->addActiveFrame(undistImg, frameID);
 	frameID++;
 	delete undistImg;
 
+	// get pose
+	std::vector<double> pose;
+	pose = fullSystem->getResult();
+
+	// publish odom
+	nav_msgs::Odometry odom;
+	odom.header.stamp =  ros::Time::now();
+	odom.pose.pose.position.x = pose[1];
+	odom.pose.pose.position.y = pose[2];
+	odom.pose.pose.position.z = pose[3];
+	odom.pose.pose.orientation.x = pose[4];
+	odom.pose.pose.orientation.y = pose[5];
+	odom.pose.pose.orientation.z = pose[6];
+	odom.pose.pose.orientation.z = pose[7];
+	posePub.publish(odom);
+
 }
-
-
-
 
 
 int main( int argc, char** argv )
 {
-	ros::init(argc, argv, "dso_live");
-
-
+	ros::init(argc, argv, "ldso_live");
 
 	for(int i=1; i<argc;i++) parseArgument(argv[i]);
 
@@ -202,19 +162,10 @@ int main( int argc, char** argv )
             (int)undistorter->getSize()[1],
             undistorter->getK().cast<float>());
 
-
-    fullSystem = new FullSystem();
+	shared_ptr<ORBVocabulary> voc(new ORBVocabulary());
+    voc->load(vocPath);
+    fullSystem = new FullSystem(voc);
     fullSystem->linearizeOperation=false;
-
-
-    if(!disableAllDisplay)
-	    fullSystem->outputWrapper.push_back(new IOWrap::PangolinDSOViewer(
-	    		 (int)undistorter->getSize()[0],
-	    		 (int)undistorter->getSize()[1]));
-
-
-    if(useSampleOutput)
-        fullSystem->outputWrapper.push_back(new IOWrap::SampleOutputWrapper());
 
 
     if(undistorter->photometricUndist != 0)
@@ -223,13 +174,10 @@ int main( int argc, char** argv )
     ros::NodeHandle nh;
     ros::Subscriber imgSub = nh.subscribe("image", 1, &vidCb);
 
-    ros::spin();
+	ros::NodeHandle r;
+	posePub = r.advertise<nav_msgs::Odometry>("dso_odom", 10);
 
-    for(IOWrap::Output3DWrapper* ow : fullSystem->outputWrapper)
-    {
-        ow->join();
-        delete ow;
-    }
+    ros::spin();
 
     delete undistorter;
     delete fullSystem;
